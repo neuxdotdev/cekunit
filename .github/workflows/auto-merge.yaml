@@ -1,0 +1,112 @@
+# .github/workflows/auto-merge-advanced.yml
+name: Auto Merge neuxdotdev PR - Advanced
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  pull_request_review:
+    types: [submitted]
+  check_suite:
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: |
+      github.actor == 'neuxdotdev' &&
+      !contains(github.event.pull_request.labels.*.name, 'do-not-merge')
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: Setup GitHub CLI
+      run: |
+        gh --version
+        
+    - name: Check PR status
+      id: pr-check
+      run: |
+        # Check if PR is mergeable
+        MERGEABLE=$(gh pr view ${{ github.event.pull_request.number }} --json mergeable --jq '.mergeable')
+        MERGE_STATE=$(gh pr view ${{ github.event.pull_request.number }} --json mergeStateStatus --jq '.mergeStateStatus')
+        
+        echo "Mergeable: $MERGEABLE"
+        echo "Merge State: $MERGE_STATE"
+        
+        if [ "$MERGEABLE" != "MERGEABLE" ]; then
+          echo "PR is not mergeable. Exiting."
+          echo "mergeable=false" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        if [ "$MERGE_STATE" != "CLEAN" ] && [ "$MERGE_STATE" != "BEHIND" ]; then
+          echo "Merge state is not clean. Current state: $MERGE_STATE"
+          echo "mergeable=false" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        echo "mergeable=true" >> $GITHUB_OUTPUT
+
+    - name: Run tests (optional)
+      if: steps.pr-check.outputs.mergeable == 'true'
+      run: |
+        # Add your test commands here
+        echo "Running tests..."
+        # Example: npm test
+        # Example: go test ./...
+        
+    - name: Auto-merge PR
+      if: steps.pr-check.outputs.mergeable == 'true'
+      run: |
+        echo "🔄 Auto-merging PR #${{ github.event.pull_request.number }} from neuxdotdev"
+        
+        # Update PR branch if behind
+        gh pr checkout ${{ github.event.pull_request.number }}
+        
+        # Try to merge
+        gh pr merge ${{ github.event.pull_request.number }} \
+          --merge \
+          --delete-branch \
+          --body "Automatically merged by GitHub Actions for neuxdotdev"
+        
+        echo "✅ PR successfully merged!"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+    - name: Comment on success
+      if: steps.pr-check.outputs.mergeable == 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: '✅ PR automatically merged by GitHub Actions for @neuxdotdev'
+          })
+
+    - name: Comment on failure
+      if: steps.pr-check.outputs.mergeable == 'false'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: '❌ PR cannot be automatically merged. Please check for conflicts or failing checks.'
+          })
+
+
+
+
+
+
